@@ -1,0 +1,9 @@
+version: "2"
+services:
+  app:
+    build: .
+    volumes:
+      - .:/go/src/sse_chat
+    command: go run cmd/chatserver/main.go
+    ports:
+      - "8090:8090"
