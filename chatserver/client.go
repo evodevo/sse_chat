@@ -30,10 +30,6 @@ func (c *Client) GetTopic() string {
 	return c.topic
 }
 
-func (c *Client) SetTimeoutHandler(timeout time.Duration, handler func()) {
-	c.timer = time.AfterFunc(timeout, handler)
-}
-
 // Returns how long the client has been connected.
 func (c *Client) GetConnectedTime() time.Duration {
 	return time.Since(c.connectedAt)

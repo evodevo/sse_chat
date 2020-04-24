@@ -15,10 +15,16 @@ import (
 
 const connectionTimeoutSec = 30
 
+type MessageRequest struct {
+	topic       string
+	message     string
+}
+
 type Server struct {
 	topics             map[string]*Topic
 	clientConnected    chan *Client
 	clientDisconnected chan *Client
+	messageReceived    chan *MessageRequest
 	serverShutdown     chan bool
 	lastMessageId      int
 	logger             *log.Logger
@@ -31,6 +37,7 @@ func NewServer() *Server {
 		make(map[string]*Topic),
 		make(chan *Client),
 		make(chan *Client),
+		make(chan *MessageRequest),
 		make(chan bool),
 		0,
 		log.New(os.Stdout, "[chatserver] ", log.LstdFlags),
@@ -75,20 +82,9 @@ func (s *Server) handleGetMessages(response http.ResponseWriter, request *http.R
 	client := NewClient(topicName)
 	s.clientConnected <- client
 
-	//time.AfterFunc(connectionTimeoutSec * time.Second, func() {
-	//	s.onClientTimeout(client)
-	//})
-
-	client.SetTimeoutHandler(connectionTimeoutSec * time.Second, func() {
-		s.onClientTimeout(client)
-	})
+	timer := time.NewTimer(connectionTimeoutSec * time.Second)
 
 	requestFinished := request.Context().Done()
-
-	go func() {
-		<-requestFinished
-		s.clientDisconnected <- client
-	}()
 
 	response.Header().Set("Cache-Control", "no-cache")
 	response.Header().Set("Content-Type", "text/event-stream")
@@ -98,9 +94,23 @@ func (s *Server) handleGetMessages(response http.ResponseWriter, request *http.R
 	response.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	for message := range client.messages {
-		_, _ = fmt.Fprintf(response, message.Serialize())
-		flusher.Flush()
+	for {
+		select {
+		case <-timer.C:
+			connectedTimeInSeconds := s.getClientConnectedTime(client)
+			s.logger.Printf("client connected for %d seconds, disconnecting.", connectedTimeInSeconds)
+			message := TimeoutMessage(s.generateMessageId(), fmt.Sprintf("%ds", connectedTimeInSeconds))
+			_, _ = fmt.Fprintf(response, message.Serialize())
+			flusher.Flush()
+			s.clientDisconnected <- client
+			return
+		case <-requestFinished:
+			s.clientDisconnected <- client
+			return
+		case message := <-client.messages:
+			_, _ = fmt.Fprintf(response, message.Serialize())
+			flusher.Flush()
+		}
 	}
 }
 
@@ -118,26 +128,31 @@ func (s *Server) handlePostMessage(response http.ResponseWriter, request *http.R
 		return
 	}
 
-	nextMessageId := s.generateMessageId()
-
-	s.logger.Printf(
-		"sending message '%s' with id %s to topic '%s'",
-		message,
-		strconv.Itoa(nextMessageId),
-		topicName,
-	)
-
 	response.Header().Set("Access-Control-Allow-Origin", "*")
 
-	s.sendToTopic(topicName, TextMessage(nextMessageId, string(message)))
+	messageRequest := &MessageRequest{
+		topic:   topicName,
+		message: string(message),
+	}
+
+	s.messageReceived <- messageRequest
 
 	response.WriteHeader(http.StatusNoContent)
 }
 
 // Send message to all clients subscribed to a topic.
-func (s *Server) sendToTopic(topicName string, message *Message) {
+func (s *Server) sendMessageToTopic(topicName string, message string) {
 	if topic, exists := s.getTopic(topicName); exists {
-		topic.SendMessage(message)
+		nextMessageId := s.generateMessageId()
+
+		topic.SendMessage(TextMessage(nextMessageId, message))
+
+		s.logger.Printf(
+			"sent message '%s' with id %s to topic '%s'",
+			message,
+			strconv.Itoa(nextMessageId),
+			topicName,
+		)
 
 		s.logger.Printf("message sent to topic '%s'.", topicName)
 	} else {
@@ -207,6 +222,9 @@ func (s *Server) listen() {
 		case c := <-s.clientDisconnected:
 			s.onClientDisconnected(c)
 
+		case m := <-s.messageReceived:
+			s.sendMessageToTopic(m.topic, m.message)
+
 		case <-s.serverShutdown:
 			s.onServerShutdown()
 			return
@@ -236,18 +254,26 @@ func (s *Server) onClientDisconnected(c *Client) {
 			s.logger.Printf("topic '%s' has no clients subscribed, destroying.", topic.name)
 			s.destroyTopic(topic)
 		}
+	} else {
+		s.logger.Printf("Topic does not exist")
 	}
+}
+
+func (s *Server) getClientConnectedTime(c *Client) int {
+	duration := c.GetConnectedTime()
+	return int(math.RoundToEven(duration.Seconds()))
 }
 
 // Handles client timeout.
 func (s *Server) onClientTimeout(c *Client) {
 	duration := c.GetConnectedTime()
 	elapsedTimeInSeconds := int(math.RoundToEven(duration.Seconds()))
-	log.Printf("client connected for %d seconds, disconnecting.", elapsedTimeInSeconds)
+	s.logger.Printf("client connected for %d seconds, disconnecting.", elapsedTimeInSeconds)
 	c.SendMessage(TimeoutMessage(
 		s.generateMessageId(),
 		fmt.Sprintf("%ds", elapsedTimeInSeconds),
 	))
+
 	s.clientDisconnected <- c
 }
 
