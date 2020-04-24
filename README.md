@@ -1,4 +1,4 @@
-# Chat server demo using Server Send Events
+# Chat server demo using Server Sent Events
 
 To start the server:
 
