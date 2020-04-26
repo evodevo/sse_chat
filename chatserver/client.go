@@ -1,13 +1,14 @@
 package chatserver
 
-import "time"
+import (
+	"time"
+)
 
 // Represents the client connected to a chat server.
 type Client struct {
 	topic string
 	connectedAt time.Time
 	messages chan *Message
-	timer *time.Timer
 }
 
 // Creates new client instance.
@@ -16,7 +17,6 @@ func NewClient(topic string) *Client {
 		topic,
 		time.Now(),
 		make(chan *Message),
-		nil,
 	}
 }
 
@@ -36,9 +36,5 @@ func (c *Client) GetConnectedTime() time.Duration {
 }
 
 func (c *Client) Unsubscribe() {
-	if c.timer != nil {
-		c.timer.Stop()
-	}
-
 	close(c.messages)
 }

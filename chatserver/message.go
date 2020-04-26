@@ -2,7 +2,6 @@ package chatserver
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -14,19 +13,19 @@ type Message struct {
 }
 
 // Creates text message instance.
-func TextMessage(id int, data string) *Message {
+func TextMessage(id string, data string) *Message {
 	return NewMessage(id, data, "msg")
 }
 
 // Creates timeout message instance.
-func TimeoutMessage(id int, data string) *Message {
+func TimeoutMessage(id string, data string) *Message {
 	return NewMessage(id, data, "timeout")
 }
 
 // Creates new message instance.
-func NewMessage(id int, data string, event string) *Message {
+func NewMessage(id string, data string, event string) *Message {
 	return &Message{
-		strconv.Itoa(id),
+		id,
 		data,
 		event,
 	}
